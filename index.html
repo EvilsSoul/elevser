@@ -504,11 +504,13 @@ let me=null,sites=[],buildings=[],units=[],notes=[],maint=[],events=[],checks=[]
 let sched=null,nickMap={},groupUids=[];
 let maintFilter='전체',bldSid=null,unitSid=null,unitBid=null,curReg='note';
 let calY=new Date().getFullYear(),calM=new Date().getMonth(),calSel=null;
-// 동 미지정 호기의 점검 그룹 매핑 — localStorage 저장 {unitId: schedGroupKey}
+// 동 미지정 호기의 점검 그룹 매핑 — 마스터 계정 users.unit_group_map(json)에 저장
 let unitGroupMap={};
-function loadUnitGroupMap(){try{unitGroupMap=JSON.parse(localStorage.getItem(ugKey())||'{}')}catch(e){unitGroupMap={};}}
-function saveUnitGroupMap(){localStorage.setItem(ugKey(),JSON.stringify(unitGroupMap));}
 function getUnitGroup(uid){return unitGroupMap[uid]||null;}
+async function saveUnitGroupMap(){
+  try{await api('PATCH',`users?id=eq.${masterUid()}`,{unit_group_map:unitGroupMap});}
+  catch(e){console.error('unitGroupMap 저장 오류',e);}
+}
 
 // ── API ─────────────────────────────────────────────────────────
 async function api(m,p,b){
@@ -561,8 +563,8 @@ async function saveUnitGroup(){
   const uid=document.getElementById('ugm-unit-id').value;
   const sg=document.getElementById('ugm-sgroup').value.trim()||null;
   if(sg) unitGroupMap[uid]=sg; else delete unitGroupMap[uid];
-  saveUnitGroupMap();
-  closeMo('unit-group-modal');renderSites();renderInsp_();
+  await saveUnitGroupMap();
+  closeMo('unit-group-modal');await loadAll();renderSites();renderInsp_();
 }
 
 function doLogout(){
@@ -578,8 +580,7 @@ async function startApp(){
   document.getElementById('app').style.display='flex';
   document.getElementById('r-mdate').value=todayStr();
   document.getElementById('em-date').value=todayStr();
-  await loadAll(); // loadGroupInfo 포함 → masterUid() 이후 사용 가능
-  loadUnitGroupMap();
+  await loadAll();
   renderHome();renderCalendar();renderSites();renderMaint();buildMaintDD();renderEvents();
 }
 
@@ -606,8 +607,6 @@ function gf(){
 }
 function masterUid(){return me._master_uid||me.id;}
 function schedUid(){return masterUid();}
-// unitGroupMap 키: 마스터 uid 기준으로 통일 (그룹 전체가 같은 지도 공유)
-function ugKey(){return`unitGroups_${masterUid()}`;}
 
 // ── 데이터 로드 ─────────────────────────────────────────────────
 async function loadAll(){
@@ -634,10 +633,11 @@ async function loadAll(){
     api('GET',`inspection_checks?${filter}&checked_date=gte.${t}&order=checked_date.asc`).catch(()=>[])
   ]);
   try{
-    const r=await api('GET',`users?id=eq.${muid}&select=sched_data`);
+    const r=await api('GET',`users?id=eq.${muid}&select=sched_data,unit_group_map`);
     if(r?.[0]?.sched_data)sched=JSON.parse(r[0].sched_data);
     else sched=null;
-  }catch(e){sched=null;}
+    unitGroupMap=r?.[0]?.unit_group_map||{};
+  }catch(e){sched=null;unitGroupMap={};}
   syncSiteSels();
 }
 
@@ -1432,8 +1432,7 @@ async function saveUnit(){
   const sg=unitBid?null:(document.getElementById('um-sgroup').value.trim()||null);
   try{
     const res=await api('POST','units',{site_id:unitSid,building_id:unitBid||null,name});
-    // 동 미지정 호기의 그룹은 localStorage에 저장
-    if(!unitBid&&sg&&res?.[0]?.id){unitGroupMap[res[0].id]=sg;saveUnitGroupMap();}
+    if(!unitBid&&sg&&res?.[0]?.id){unitGroupMap[res[0].id]=sg;await saveUnitGroupMap();}
     closeMo('unit-modal');await loadAll();renderSites();renderInsp_();syncSiteSels();
   }catch(e){alert('오류: '+e.message);}
 }
