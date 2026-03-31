@@ -553,19 +553,10 @@ function openEditUnitGroup(uid,sid){
   if(!groups.length){
     picker.innerHTML='<div style="padding:11px 14px;font-size:13px;color:var(--txt3)">점검계획표 데이터가 없습니다</div>';
   } else {
-    picker.innerHTML=`<div class="sched-pick-item ${!curSg?'selected':''}" onclick="event.stopPropagation();pickUGMGroup('',this)"><span class="spi-name">지정 안 함</span><span class="spi-check" style="${!curSg?'':'display:none'}">✓</span></div>`+
-      groups.map(g=>{const sel=(g.key===curSg);return`<div class="sched-pick-item ${sel?'selected':''}" onclick="event.stopPropagation();pickUGMGroup('${escQ(g.key)}',this)"><div><div class="spi-name">${g.label}</div></div><span class="spi-check" style="${sel?'':'display:none'}">✓</span></div>`;}).join('');
+    picker.innerHTML=`<div class="sched-pick-item ${!curSg?'selected':''}" onclick="event.stopPropagation();pickUGMGroup(-1,this)"><span class="spi-name">지정 안 함</span><span class="spi-check" style="${!curSg?'':'display:none'}">✓</span></div>`+
+      groups.map((g,i)=>{const sel=(g.key===curSg);return`<div class="sched-pick-item ${sel?'selected':''}" onclick="event.stopPropagation();pickUGMGroup(${i},this)"><div><div class="spi-name">${g.label}</div></div><span class="spi-check" style="${sel?'':'display:none'}">✓</span></div>`;}).join('');
   }
   document.getElementById('unit-group-modal').style.display='flex';
-}
-function pickUGMGroup(key,el){
-  document.getElementById('ugm-sgroup').value=key;
-  document.querySelectorAll('#ugm-sched-picker .sched-pick-item').forEach(e=>{
-    e.classList.remove('selected');
-    const c=e.querySelector('.spi-check');if(c)c.style.display='none';
-  });
-  el.classList.add('selected');
-  const chk=el.querySelector('.spi-check');if(chk)chk.style.display='';
 }
 async function saveUnitGroup(){
   const uid=document.getElementById('ugm-unit-id').value;
@@ -1559,8 +1550,8 @@ function openUnitModal(sid,bid,label){
     if(!unitSchedGroups.length){
       picker.innerHTML='<div style="padding:11px 14px;font-size:13px;color:var(--txt3)">점검계획표 데이터가 없습니다</div>';
     } else {
-      picker.innerHTML=`<div class="sched-pick-item selected" onclick="event.stopPropagation();pickUnitSchedGroup('',this)"><span class="spi-name">지정 안 함</span><span class="spi-check">✓</span></div>`+
-        unitSchedGroups.map(g=>`<div class="sched-pick-item" onclick="event.stopPropagation();pickUnitSchedGroup('${escQ(g.key)}',this)">
+      picker.innerHTML=`<div class="sched-pick-item selected" onclick="event.stopPropagation();pickUnitSchedGroup(-1,this)"><span class="spi-name">지정 안 함</span><span class="spi-check">✓</span></div>`+
+        unitSchedGroups.map((g,i)=>`<div class="sched-pick-item" onclick="event.stopPropagation();pickUnitSchedGroup(${i},this)">
           <div><div class="spi-name">${g.label}</div></div>
           <span class="spi-check" style="display:none">✓</span>
         </div>`).join('');
@@ -1570,11 +1561,10 @@ function openUnitModal(sid,bid,label){
   }
   document.getElementById('unit-modal').style.display='flex';
 }
-// 현장의 sched_group(aptName)에 연결된 점검 그룹 목록 반환
-// 점검계획표에서 해당 aptName을 포함하는 모든 항목(bldText 포함) 수집
+let _unitSchedGroupsCache=[];
 function getUnitSchedGroups(sid){
   const site=sites.find(s=>s.id===sid);
-  if(!site||!sched?.plans)return[];
+  if(!site||!sched?.plans){_unitSchedGroupsCache=[];return[];}
   const aptName=site.sched_group||site.name;
   const seen=new Set();const result=[];
   Object.values(sched.plans).forEach(plan=>{
@@ -1590,11 +1580,23 @@ function getUnitSchedGroups(sid){
       result.push({key,label:bldText||name,aptName:name,bldText});
     });
   });
+  _unitSchedGroupsCache=result;
   return result;
 }
-function pickUnitSchedGroup(key,el){
+function pickUnitSchedGroup(idx,el){
+  const key=idx===-1?'':((_unitSchedGroupsCache[idx]||{}).key||'');
   document.getElementById('um-sgroup').value=key;
   document.querySelectorAll('#um-sched-picker .sched-pick-item').forEach(e=>{
+    e.classList.remove('selected');
+    const c=e.querySelector('.spi-check');if(c)c.style.display='none';
+  });
+  el.classList.add('selected');
+  const chk=el.querySelector('.spi-check');if(chk)chk.style.display='';
+}
+function pickUGMGroup(idx,el){
+  const key=idx===-1?'':((_unitSchedGroupsCache[idx]||{}).key||'');
+  document.getElementById('ugm-sgroup').value=key;
+  document.querySelectorAll('#ugm-sched-picker .sched-pick-item').forEach(e=>{
     e.classList.remove('selected');
     const c=e.querySelector('.spi-check');if(c)c.style.display='none';
   });
