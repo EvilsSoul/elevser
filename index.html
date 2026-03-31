@@ -328,7 +328,23 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
         <div id="maint-list"></div>
       </div>
       <div id="hist-events" style="display:none">
-        <div style="margin-bottom:10px"><button class="btn btn-sm btn-ghost" onclick="openEventModal()" style="width:100%">+ 일정 추가</button></div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button class="btn btn-sm btn-ghost" onclick="openEventModal()" style="flex:1">+ 일정 추가</button>
+        </div>
+        <!-- 완료 상태 칩 -->
+        <div class="filter-row" style="margin-bottom:8px">
+          <div class="chip" id="ev-chip-all" onclick="setEvDoneFilter('all',this)">전체</div>
+          <div class="chip" id="ev-chip-done" onclick="setEvDoneFilter('done',this)">완료</div>
+          <div class="chip on" id="ev-chip-undone" onclick="setEvDoneFilter('undone',this)">미완료</div>
+        </div>
+        <!-- 현장 드롭다운 -->
+        <div class="site-dropdown-wrap" id="ev-dd-wrap">
+          <button class="site-dropdown-btn" onclick="toggleDD('ev')">
+            <span id="ev-dd-label">전체 현장</span>
+            <span style="color:var(--txt3);font-size:12px">▾</span>
+          </button>
+          <div class="site-dropdown-list" id="ev-dd-list"></div>
+        </div>
         <div id="events-list"></div>
       </div>
     </div>
@@ -375,7 +391,8 @@ body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)
 <div class="mo" id="site-modal" style="display:none" onclick="closeMo('site-modal')">
 <div class="ms" onclick="event.stopPropagation()">
   <div class="mo-drag"></div>
-  <div class="mo-title">🏢 현장 추가</div>
+  <div class="mo-title" id="sm-modal-title">🏢 현장 추가</div>
+  <input type="hidden" id="sm-edit-id" value="">
   <label class="flbl">아파트명 *</label>
   <input class="finp" id="sm-name" placeholder="예: 은계센트럴타운">
   <label class="flbl">주소 (선택)</label>
@@ -621,11 +638,14 @@ function fmtD(iso){if(!iso)return'';const d=new Date(iso);return`${d.getMonth()+
 
 // ══ 점검계획표 유틸 ══════════════════════════════════════════════
 function parseBldRange(text){
-  if(!text)return[];
-  const m=text.match(/(\d+)\s*동?\s*[~～\-]\s*(\d+)\s*동/);
-  if(m){const s=parseInt(m[1]),e=parseInt(m[2]),res=[];for(let i=s;i<=e;i++)res.push(i+'동');return res;}
-  const m2=text.match(/(\d+)\s*동/);if(m2)return[m2[1]+'동'];
-  return[];
+  if(!text)return{names:[],includeShuttle:false};
+  const includeShuttle=/\+\s*(셔틀|shuttle)/i.test(text);
+  // +셔틀 키워드 제거 후 동 범위 파싱
+  const clean=text.replace(/\+\s*(셔틀|shuttle)/i,'').trim();
+  const m=clean.match(/(\d+)\s*동?\s*[~～\-]\s*(\d+)\s*동/);
+  if(m){const s=parseInt(m[1]),e=parseInt(m[2]),res=[];for(let i=s;i<=e;i++)res.push(i+'동');return{names:res,includeShuttle};}
+  const m2=clean.match(/(\d+)\s*동/);if(m2)return{names:[m2[1]+'동'],includeShuttle};
+  return{names:[],includeShuttle};
 }
 
 // 특정 날짜의 점검 목록 [{aptName, bldText, isCustom, customText, customColor, site, bldData, directUnits, totalUnits}]
@@ -649,7 +669,7 @@ function getSchedForDate(ds){
       const lines=item.split('\n');
       const aptName=lines[0].trim();
       const bldText=lines[1]?.trim()||'';
-      const bldNames=parseBldRange(bldText);
+      const {names:bldNames,includeShuttle}=parseBldRange(bldText);
 
       const matchedSite=sites.find(s=>(s.sched_group&&s.sched_group===aptName)||s.name===aptName||s.name.startsWith(aptName));
       let matchedBlds=[];
@@ -661,9 +681,11 @@ function getSchedForDate(ds){
         }else matchedBlds=allBlds;
       }
       const bldData=matchedBlds.map(b=>({bld:b,units:units.filter(u=>u.building_id===b.id)}));
-      const directUnits=matchedSite?units.filter(u=>u.site_id===matchedSite.id&&!u.building_id):[];
+      // 동 범위 없음 → 전체(셔틀 포함) / 동 범위 있음 → +셔틀 명시한 경우만 셔틀 포함
+      const includeDirectUnits = matchedSite && (!bldNames.length || includeShuttle);
+      const directUnits=includeDirectUnits?units.filter(u=>u.site_id===matchedSite.id&&!u.building_id):[];
       const totalUnits=bldData.reduce((s,b)=>s+b.units.length,0)+directUnits.length;
-      result.push({isCustom:false,aptName,bldText,site:matchedSite||null,bldData,directUnits,totalUnits});
+      result.push({isCustom:false,aptName,bldText,site:matchedSite||null,bldData,directUnits,totalUnits,includeShuttle});
     });
   });
   return result;
@@ -860,8 +882,10 @@ function renderCalendar(){
           } else {
             const lines=item.split('\n');
             const name=lines[0].trim();
+            const bldRaw=lines[1]?.trim()||'';
+            const {names:bns,includeShuttle:ish}=parseBldRange(bldRaw);
             if(!dayMap[ds].find(x=>x.name===name))
-              dayMap[ds].push({name,bldText:lines[1]?.trim()||'',isCustom:false});
+              dayMap[ds].push({name,bldText:bldRaw,bldNames:bns,includeShuttle:ish,isCustom:false});
           }
         });
       });
@@ -888,7 +912,7 @@ function renderCalendar(){
     if(dow===0||dow===6) continue; // 토/일 스킵
     const ds=`${calY}-${String(calM+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
     const items=dayMap[ds]||[];
-    const dotsHtml=items.slice(0,2).map(x=>`<div class="cal-dot${x.isCustom?' custom':''}">${x.isCustom?'★':''} ${x.name}</div>`).join('');
+    const dotsHtml=items.slice(0,2).map(x=>`<div class="cal-dot${x.isCustom?' custom':''}">${x.isCustom?'★':''} ${x.name}${(!x.isCustom&&x.includeShuttle)?'<span style="font-size:9px;color:var(--amber)"> +셔틀</span>':''}</div>`).join('');
     const more=items.length>2?`<div class="cal-dot" style="color:var(--txt3)">+${items.length-2}</div>`:'';
     h+=`<div class="cal-cell${ds===t?' today':''}${ds===calSel?' selected':''}${items.length?' has-sched':''}" onclick="calClick('${ds}')">
       <div class="cal-num">${d}</div>
@@ -944,13 +968,17 @@ function renderCalDetail(ds){
         </div>`;
       });
     });
-    g.directUnits.forEach(u=>{
-      const done=isChecked(u.id,ds);
-      body+=`<div class="unit-row ${done?'checked':''}">
-        <div class="ur-name">${u.name}</div><div class="ur-note"></div>
-        <button class="ur-btn ${done?'done':'todo'}" onclick="toggleCheck('${u.id}','${ds}')">${done?'✅ 완료':'○ 미완료'}</button>
-      </div>`;
-    });
+    if(g.directUnits.length){
+      body+=`<div style="padding:6px 12px;background:var(--bg3);font-size:12px;font-weight:600;color:var(--txt2);display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)">
+        <span>🚌 셔틀호기</span><span>${g.directUnits.filter(u=>isChecked(u.id,ds)).length}/${g.directUnits.length}</span></div>`;
+      g.directUnits.forEach(u=>{
+        const done=isChecked(u.id,ds);
+        body+=`<div class="unit-row ${done?'checked':''}">
+          <div class="ur-name">${u.name}</div><div class="ur-note"></div>
+          <button class="ur-btn ${done?'done':'todo'}" onclick="toggleCheck('${u.id}','${ds}')">${done?'✅ 완료':'○ 미완료'}</button>
+        </div>`;
+      });
+    }
     // 연결된 특이사항
     const siteNotes=g.site?notes.filter(n=>n.site_name===g.site.name).slice(0,2):[];
     if(siteNotes.length){
@@ -1059,6 +1087,7 @@ function renderSites(){
           <button class="btn btn-sm btn-ghost" onclick="openUnitModal('${site.id}',null,'${escQ(site.name)} (동 없음)')">＋ 호기</button>
           <button class="btn btn-sm btn-ghost" onclick="openTL('${escQ(site.name)}')">📋 이력</button>
           <button class="btn btn-sm btn-ghost" onclick="openRegSite('${site.id}')">＋ 기록</button>
+          <button class="btn btn-sm" style="background:var(--amberl);color:var(--amber)" onclick="openEditSite('${site.id}','${escQ(site.name)}','${escQ(site.address||"")}','${escQ(site.sched_group||"")}')" >✏️ 수정</button>
           <button class="btn btn-sm btn-danger" onclick="delSite('${site.id}')">현장삭제</button>
         </div>
       </div>
@@ -1138,9 +1167,12 @@ function toggleDD(type){
   const list=document.getElementById(`${type}-dd-list`);
   if(!list)return;
   const isOpen=list.classList.contains('open');
-  // 모든 드롭다운 닫기
   document.querySelectorAll('.site-dropdown-list').forEach(l=>l.classList.remove('open'));
-  if(!isOpen){buildMaintDD();list.classList.add('open');}
+  if(!isOpen){
+    if(type==='ev') buildEvDD();
+    else buildMaintDD();
+    list.classList.add('open');
+  }
 }
 // 드롭다운 외부 클릭 시 닫기
 document.addEventListener('click',e=>{
@@ -1168,22 +1200,64 @@ function renderMaint(){
   document.getElementById('maint-list').innerHTML=d.length?d.map(maintCard).join(''):`<div class="empty"><div class="empty-text">${emptyMsgs[maintDoneFilter]}</div></div>`;
 }
 
+let evDoneFilter='undone'; // 'all'|'done'|'undone'
+let evSiteFilter='전체';
+
+function setEvDoneFilter(f,el){
+  evDoneFilter=f;
+  document.querySelectorAll('#ev-chip-all,#ev-chip-done,#ev-chip-undone').forEach(c=>c.classList.remove('on'));
+  if(el)el.classList.add('on');
+  renderEvents();
+}
+
+function buildEvDD(){
+  const list=document.getElementById('ev-dd-list');
+  if(!list)return;
+  const siteNames=['전체',...new Set(events.map(e=>e.site_name).filter(Boolean))].sort((a,b)=>a==='전체'?-1:b==='전체'?1:a.localeCompare(b));
+  list.innerHTML=siteNames.map(sn=>{
+    const cnt=sn==='전체'?events.length:events.filter(e=>e.site_name===sn).length;
+    const sel=evSiteFilter===sn;
+    return`<div class="sdl-item${sel?' selected':''}" onclick="pickEvSite('${escQ(sn)}',this)">
+      <span class="sdl-check">✓</span>
+      <span class="sdl-name">${sn}</span>
+      <span class="sdl-cnt">${cnt}건</span>
+    </div>`;
+  }).join('');
+}
+
+function pickEvSite(sn,el){
+  evSiteFilter=sn;
+  document.getElementById('ev-dd-label').textContent=sn==='전체'?'전체 현장':sn;
+  document.querySelectorAll('#ev-dd-list .sdl-item').forEach(i=>i.classList.remove('selected'));
+  if(el)el.classList.add('selected');
+  toggleDD('ev');
+  renderEvents();
+}
+
 function renderEvents(){
   const t=todayStr();
-  const all=[...events.filter(e=>!e.done&&e.event_date>=t),...events.filter(e=>e.done||e.event_date<t)];
-  document.getElementById('events-list').innerHTML=all.length?all.map(e=>`
-    <div class="card card-sm">
+  let d=[...events.filter(e=>!e.done&&e.event_date>=t),...events.filter(e=>e.done||e.event_date<t)];
+  if(evSiteFilter!=='전체') d=d.filter(e=>e.site_name===evSiteFilter);
+  if(evDoneFilter==='undone') d=d.filter(e=>!e.done);
+  else if(evDoneFilter==='done') d=d.filter(e=>!!e.done);
+  const emptyMsgs={all:'등록된 일정이 없습니다',done:'완료된 일정이 없습니다',undone:'미완료 일정이 없습니다'};
+  document.getElementById('events-list').innerHTML=d.length?d.map(e=>{
+    let titleTxt=e.title||''; let extraTxt='';
+    try{const p=JSON.parse(titleTxt);titleTxt=p.title||titleTxt;if(p.wtype)extraTxt=` [${p.wtype}]`;}catch(ex){}
+    return`<div class="card card-sm">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-        <div><div style="font-size:13px;font-weight:600">${e.title}</div>
+        <div>
+          <div style="font-size:13px;font-weight:600">${titleTxt}${extraTxt?`<span style="font-size:11px;color:var(--txt3)">${extraTxt}</span>`:''}</div>
           <div style="font-size:11px;color:var(--txt3)">${e.event_date}${e.site_name?' | '+e.site_name:''}</div>
         </div>
         <span class="badge ${e.done?'badge-gray':'badge-green'}">${e.done?'완료':'예정'}</span>
       </div>
       <div style="display:flex;gap:6px;margin-top:8px">
-        ${!e.done?`<button class="btn btn-sm" style="background:var(--greenl);color:var(--green)" onclick="doneEvent('${e.id}')">✅ 완료</button>`:''}
+        <button class="btn btn-sm" style="background:${e.done?'var(--greenl)':'var(--bg3)'};color:${e.done?'var(--green)':'var(--txt3)'};border:1px solid ${e.done?'#6EE7B7':'var(--border2)'}" onclick="doneEvent('${e.id}',${e.done})">${e.done?'✅ 완료':'○ 미완료'}</button>
         <button class="btn btn-sm btn-danger" onclick="delEvent('${e.id}')">삭제</button>
       </div>
-    </div>`).join(''):'<div class="empty"><div class="empty-text">등록된 일정이 없습니다</div></div>';
+    </div>`;
+  }).join(''):`<div class="empty"><div class="empty-text">${emptyMsgs[evDoneFilter]}</div></div>`;
 }
 
 // 타임라인
@@ -1236,8 +1310,13 @@ async function saveSite(){
   if(!name){alert('아파트명을 입력하세요.');return;}
   const addr=document.getElementById('sm-addr').value.trim();
   const sg=document.getElementById('sm-sgroup').value.trim();
+  const editId=document.getElementById('sm-edit-id').value;
   try{
-    await api('POST','sites',{user_id:me.id,name,address:addr||null,sched_group:sg||null});
+    if(editId){
+      await api('PATCH',`sites?id=eq.${editId}`,{name,address:addr||null,sched_group:sg||null});
+    } else {
+      await api('POST','sites',{user_id:me.id,name,address:addr||null,sched_group:sg||null});
+    }
     closeMo('site-modal');await loadAll();renderSites();renderHome();renderInsp_();syncSiteSels();
   }catch(e){alert('오류: '+e.message);}
 }
@@ -1312,6 +1391,23 @@ function openSiteModal(){
   }
   document.getElementById('site-modal').style.display='flex';
 }
+function openEditSite(id,name,addr,sgroup){
+  document.getElementById('sm-edit-id').value=id;
+  document.getElementById('sm-modal-title').textContent='✏️ 현장 수정';
+  document.getElementById('sm-name').value=name;
+  document.getElementById('sm-addr').value=addr;
+  const picker=document.getElementById('sm-sched-picker');
+  const schedNames=getSchedSiteNames();
+  const curSg=sgroup||'';
+  document.getElementById('sm-sgroup').value=curSg;
+  if(!schedNames.length){
+    picker.innerHTML='<div style="padding:11px 14px;font-size:13px;color:var(--txt3)">점검계획표 데이터가 없습니다</div>';
+  } else {
+    picker.innerHTML=`<div class="sched-pick-item ${!curSg?'selected':''}" onclick="pickSchedGroup('',this)"><span class="spi-name">선택 안 함</span><span class="spi-check" style="${!curSg?'':'display:none'}">✓</span></div>`+
+      schedNames.map(n=>{const sel=(n===curSg);return`<div class="sched-pick-item ${sel?'selected':''}" onclick="pickSchedGroup('${escQ(n)}',this)"><div><div class="spi-name">${n}</div></div><span class="spi-check" style="${sel?'':'display:none'}">✓</span></div>`;}).join('');
+  }
+  document.getElementById('site-modal').style.display='flex';
+}
 function openSiteModalPrefill(sgroup){
   openSiteModal();
   document.getElementById('sm-name').value=sgroup;
@@ -1375,6 +1471,7 @@ function switchHist(key,btn){
   document.querySelectorAll('#panel-history .sw-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   if(key==='maint'){buildMaintDD();renderMaint();}
+  else if(key==='events'){buildEvDD();renderEvents();}
 }
 
 // ── 자동 로그인 ─────────────────────────────────────────────────
