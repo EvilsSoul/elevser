@@ -513,8 +513,9 @@ async function saveUnitGroupMap(){
 }
 
 // ── API ─────────────────────────────────────────────────────────
-async function api(m,p,b){
-  const o={method:m,headers:H};if(b)o.body=JSON.stringify(b);
+async function api(m,p,b,extraHeaders){
+  const headers={...H,...(extraHeaders||{})};
+  const o={method:m,headers};if(b)o.body=JSON.stringify(b);
   const r=await fetch(`${SB}/rest/v1/${p}`,o);
   if(!r.ok)throw new Error(await r.text());
   return r.status===204?null:r.json();
@@ -779,11 +780,30 @@ function getSchedForDate(ds){
 
 function isChecked(unitId,ds){return checks.some(c=>c.unit_id===unitId&&c.checked_date===ds);}
 async function toggleCheck(unitId,ds){
-  const done=isChecked(unitId,ds);
+  // checks 는 오늘 이후만 로드되므로 과거 날짜는 DB에서 직접 확인
+  let done;
+  if(ds < todayStr()){
+    try{
+      const rows=await api('GET',`inspection_checks?unit_id=eq.${unitId}&checked_date=eq.${ds}&select=id`);
+      done=rows&&rows.length>0;
+    }catch(e){ done=false; }
+  } else {
+    done=isChecked(unitId,ds);
+  }
   try{
-    if(done)await api('DELETE',`inspection_checks?unit_id=eq.${unitId}&checked_date=eq.${ds}`);
-    else await api('POST','inspection_checks',{user_id:me.id,unit_id:unitId,checked_date:ds});
-    checks=await api('GET',`inspection_checks?${gf()}&checked_date=gte.${todayStr()}&order=checked_date.asc`).catch(()=>[]);
+    if(done){
+      await api('DELETE',`inspection_checks?unit_id=eq.${unitId}&checked_date=eq.${ds}`);
+    } else {
+      // Upsert 방식: 중복 시 무시 (onConflict=ignore)
+      await api('POST','inspection_checks',
+        {user_id:me.id,unit_id:unitId,checked_date:ds},
+        {'Prefer':'resolution=ignore-duplicates,return=representation'}
+      );
+    }
+    // checks 갱신: 오늘 이후 + 현재 선택 날짜(과거일 수 있음) 포함
+    const today=todayStr();
+    const minDate=ds<today?ds:today;
+    checks=await api('GET',`inspection_checks?${gf()}&checked_date=gte.${minDate}&order=checked_date.asc`).catch(()=>[]);
     renderHome();renderCalendar();
     if(calSel)renderCalDetail(calSel);
   }catch(e){alert('오류: '+e.message);}
